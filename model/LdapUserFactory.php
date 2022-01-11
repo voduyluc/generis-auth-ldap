@@ -33,10 +33,14 @@ namespace oat\authLdap\model;
 use oat\oatbox\Configurable;
 use oat\taoTestTaker\models\CrudService;
 use oat\generis\model\user\UserRdf;
+use oat\tao\model\TaoOntology;
+use oat\oatbox\service\ServiceManager;
+use oat\generis\Helper\UserHashForEncryption;
 
 
 class LdapUserFactory extends Configurable {
 
+    const OPTION_USERFACTORY = 'user_factory';
     public function createUser($rawData) {
 
         if (!isset($rawData['dn'])) {
@@ -62,13 +66,22 @@ class LdapUserFactory extends Configurable {
         if (! \core_kernel_users_Service::loginExists($userdata[PROPERTY_USER_LOGIN])) {
            $crudservice = CrudService::singleton();
            $taouser = $crudservice->CreateFromArray( $userdata );
+        } 
+		
+	    // Retrieve the specified user.
+	    $userResource = \core_kernel_users_Service::getOneUser( $userdata[PROPERTY_USER_LOGIN] );		
+		// \common_Logger::i("LdapUserFactory authenticate taouser".print_r($userResource, true));
+		
+		$userFactory = ServiceManager::getServiceManager()->get('generis/userFactory') ;
+		if ($userFactory instanceof UserFactoryServiceInterface) {
+			
+			\common_Logger::i("UserFactoryService createUser ");
+			return $userFactory->createUser($userResource, UserHashForEncryption::hash($this->password));
+		}	 
+		
+		return $userFactory->createUser($userResource, UserHashForEncryption::hash($this->password));
 
-        } else {
-
-           // Retrieve the specified user.
-           $taouser = \core_kernel_users_Service::getOneUser( $userdata[PROPERTY_USER_LOGIN] );
-        }
-
+       
         return new LdapUser($taouser->getUri(), $data);
     }
 
@@ -116,15 +129,15 @@ class LdapUserFactory extends Configurable {
     static public function getDefaultConfig()
     {
         return array(
-            PROPERTY_USER_ROLES         => self::rawValue(INSTANCE_ROLE_DELIVERY)
+            PROPERTY_USER_ROLES         => self::rawValue(TaoOntology::PROPERTY_INSTANCE_ROLE_DELIVERY)
             ,PROPERTY_USER_UILG         => self::rawValue(DEFAULT_LANG)
             ,PROPERTY_USER_DEFLG        => self::rawValue(DEFAULT_LANG)
             ,PROPERTY_USER_TIMEZONE     => self::rawValue(TIME_ZONE)
             ,PROPERTY_USER_MAIL         => self::attributeValue('mail')
             ,PROPERTY_USER_FIRSTNAME    => self::attributeValue('givenname')
             ,PROPERTY_USER_LASTNAME     => self::attributeValue('sn')
-            ,PROPERTY_USER_LOGIN        => self::attributeValue('dn')
-            ,PROPERTY_USER_PASSWORD     => self::rawValue('KLakjs892(*(761234987(*&')
+            ,PROPERTY_USER_LOGIN        => self::attributeValue('samaccountname')
+            ,PROPERTY_USER_PASSWORD     => self::rawValue('RANDOM_ABZGD'.rand())
             ,RDFS_LABEL                 => self::attributeValue('mail')
         );
     }
