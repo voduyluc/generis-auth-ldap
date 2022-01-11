@@ -2,7 +2,7 @@
 /**
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
-y * as published by the Free Software Foundation; under version 2
+ * as published by the Free Software Foundation; under version 2
  * of the License (non-upgradable).
  *
  * This program is distributed in the hope that it will be useful,
@@ -14,193 +14,153 @@ y * as published by the Free Software Foundation; under version 2
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
  *
- * Copyright (c) 2013 (original work) Open Assessment Technologies SA (under the project TAO-PRODUCT);
+ * Copyright (c) 2014 (original work) Open Assessment Technologies SA;
  *
  *
  */
 
 /**
- * Authentication adapter interface to be implemented by authentication methodes
+ * Authentication user for key value db access
  *
  * @author christophe massin
  * @package authLdap
 
  */
 
+
 namespace oat\authLdap\model;
 
-use core_kernel_users_Service;
-use core_kernel_users_InvalidLoginException;
-use oat\authLdap\model\LdapUser;
-use oat\generisHard\models\hardsql\Exception;
-use oat\oatbox\user\auth\LoginAdapter;
-
-use Zend\Authentication\Adapter\Ldap;
-use common_persistence_Manager;
-
-/**
- * Adapter to authenticate users stored in the Ldap implementation
- *
- * @author Christophe Massin <christope@taotesting.com>
- *
- */
-class LdapAdapter implements LoginAdapter
-{
-    const OPTION_ADAPTER_CONFIG = 'config';
-
-    const OPTION_USER_MAPPING = 'mapping';
-
-    /** @var  $username string */
-    private $username;
-
-    /** @var  $password string */
-    private $password;
-
-    /** @var $configuration array $configuration  */
-    protected $configuration;
-
-    /**
-     * @var \Zend\Authentication\Adapter\Ldap
-     */
-    protected $adapter;
-
-    /**
-     * Create an adapter from the configuration
-     *
-     * @param array $configuration
-     * @return oat\authLdap\model\LdapAdapter
-     */
-    public static function createFromConfig(array $configuration) {
-        $adapter = new self();
-        $adapter->setOptions($configuration);
-        return $adapter;
-    }
-
-    /**
-     * Instantiates Zend Ldap adapter
-     */
-    public function __construct() {
-        $this->adapter = new Ldap();
-    }
-
-    public function setOptions(array $options) {
-        $this->configuration = $options;
-        $this->adapter->setOptions($options['config']);
-    }
-
-    public function getOption($name) {
-        return $this->configuration[$name];
-    }
-
-    public function hasOption($name) {
-        return isset($this->configuration[$name]);
-    }
-
-    /**
-     * Set the credential
-     *
-     * @param string $login
-     * @param string $password
-     */
-    public function setCredentials($login, $password){
-        $this->username = $login;
-        $this->password = $password;
-    }
-
-    public function authenticate() {
+use oat\oatbox\Configurable;
+use oat\taoTestTaker\models\CrudService;
+use oat\generis\model\user\UserRdf;
+use oat\tao\model\TaoOntology;
+use oat\oatbox\service\ServiceManager;
+use oat\generis\Helper\UserHashForEncryption;
 
 
-        $adapter = $this->getAdapter();
+class LdapUserFactory extends Configurable {
 
-        $adapter->setUsername($this->getUsername());
-        $adapter->setPassword($this->getPassword());
-        $result = $adapter->authenticate();
+    const OPTION_USERFACTORY = 'user_factory';
+    public function createUser($rawData) {
 
-        if($result->isValid()){
-
-            $result = $adapter->getAccountObject();
-            $params = get_object_vars($result);
-
-
-            $mapping = $this->hasOption(self::OPTION_USER_MAPPING)
-                ? $this->getOption(self::OPTION_USER_MAPPING)
-                : array();
-            $factory = new LdapUserFactory($mapping);
-            $user = $factory->createUser($params);
-
-            return $user;
-
+        if (!isset($rawData['dn'])) {
+            throw new \common_exception_InconsistentData('Missing DN for LDAP user');
         } else {
-            throw new core_kernel_users_InvalidLoginException('User "'.$this->getUsername().'" failed LDAP authentication.');
+            $id = $rawData['dn'];
+        }
+
+        $data = array();
+        $userdata = array();
+
+
+        foreach ($this->getRules() as $property => $rule) {
+            $data[$property] = $this->map($rule, $rawData);
+            $userdata[$property] = $data[$property][0];
         }
 
 
+        $taouser = null;
+
+        // check if login already exists - Create if not, and add the delivery role!
+
+        if (! \core_kernel_users_Service::loginExists($userdata[PROPERTY_USER_LOGIN])) {
+           $crudservice = CrudService::singleton();
+           $taouser = $crudservice->CreateFromArray( $userdata );
+        } 
+		
+	    // Retrieve the specified user.
+	    $userResource = \core_kernel_users_Service::getOneUser( $userdata[PROPERTY_USER_LOGIN] );		
+		// \common_Logger::i("LdapUserFactory authenticate taouser".print_r($userResource, true));
+		
+		$userFactory = ServiceManager::getServiceManager()->get('generis/userFactory') ;
+		if ($userFactory instanceof UserFactoryServiceInterface) {
+			
+			\common_Logger::i("UserFactoryService createUser ");
+			return $userFactory->createUser($userResource, UserHashForEncryption::hash($this->password));
+		}	 
+		
+		return $userFactory->createUser($userResource, UserHashForEncryption::hash($this->password));
+
+       
+        return new LdapUser($taouser->getUri(), $data);
     }
 
-    /**
-     * @param \Zend\Authentication\Adapter\Ldap $adapter
-     */
-    public function setAdapter($adapter)
+    public function map($propertyConfig, $rawData) {
+        $data = array();
+        switch ($propertyConfig['type']) {
+            case 'value' :
+                $data = $propertyConfig['value'];
+                break;
+            case 'attributeValue' :
+                if (isset($rawData[$propertyConfig['attribute']])) {
+                    $value = $rawData[$propertyConfig['attribute']];
+                    $data = is_array($value) ? $value : array($value);
+                }
+                break;
+//            case 'conditionalvalue' :
+//                if (isset($rawData[$propertyConfig['attribute']]) &&
+//                    isset($rawData[$propertyConfig['attributematch']) ) {
+//                    // iterate raw data looking for attribute = attribute match
+//                    // set data = value property if determined to be true.
+//                }
+//                break;
+            case 'callback' :
+                if (isset($rawData[$propertyConfig['attribute']])) {
+                    $callback = $propertyConfig['callable'];
+                    if (is_callable($callback)) {
+                        $data = call_user_func($callback, $rawData[$propertyConfig['attribute']]);
+                    }
+                }
+                break;
+            default :
+                throw new \common_exception_InconsistentData('Unknown mapping: '.$propertyConfig['type']);
+        }
+        return $data;
+    }
+
+    public function getRules() {
+        $rules = self::getDefaultConfig();
+        foreach ($this->getOptions() as $key => $value) {
+            $rules[$key] = $value;
+        }
+        return $rules;
+    }
+
+    static public function getDefaultConfig()
     {
-        $this->adapter = $adapter;
+        return array(
+            PROPERTY_USER_ROLES         => self::rawValue(TaoOntology::PROPERTY_INSTANCE_ROLE_DELIVERY)
+            ,PROPERTY_USER_UILG         => self::rawValue(DEFAULT_LANG)
+            ,PROPERTY_USER_DEFLG        => self::rawValue(DEFAULT_LANG)
+            ,PROPERTY_USER_TIMEZONE     => self::rawValue(TIME_ZONE)
+            ,PROPERTY_USER_MAIL         => self::attributeValue('mail')
+            ,PROPERTY_USER_FIRSTNAME    => self::attributeValue('givenname')
+            ,PROPERTY_USER_LASTNAME     => self::attributeValue('sn')
+            ,PROPERTY_USER_LOGIN        => self::attributeValue('samaccountname')
+            ,PROPERTY_USER_PASSWORD     => self::rawValue('RANDOM_ABZGD'.rand())
+            ,RDFS_LABEL                 => self::attributeValue('mail')
+        );
     }
 
-    /**
-     * @return \Zend\Authentication\Adapter\Ldap
-     */
-    public function getAdapter()
-    {
-        return $this->adapter;
+    static protected function rawValue($value) {
+        return array(
+            'type' => 'value',
+            'value' => array($value)
+        );
     }
 
-
-    /**
-     * @param array $configuration
-     */
-    public function setConfiguration($configuration)
-    {
-        $this->configuration = $configuration;
+    static protected function attributeValue($attributeName) {
+        return array(
+            'type' => 'attributeValue',
+            'attribute' => $attributeName
+        );
     }
 
-    /**
-     * @return array
-     */
-    public function getConfiguration()
-    {
-        return $this->configuration;
+    static protected function callback($callable, $attributeName) {
+        return array(
+            'type' => 'callback',
+            'callable' => $callable,
+            'attribute' => $attributeName
+        );
     }
-
-    /**
-     * @param string $password
-     */
-    public function setPassword($password)
-    {
-        $this->password = $password;
-    }
-
-    /**
-     * @return string
-     */
-    public function getPassword()
-    {
-        return $this->password;
-    }
-
-    /**
-     * @param string $username
-     */
-    public function setUsername($username)
-    {
-        $this->username = $username;
-    }
-
-    /**
-     * @return string
-     */
-    public function getUsername()
-    {
-        return $this->username;
-    }
-
-
 }
