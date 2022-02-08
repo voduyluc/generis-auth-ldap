@@ -29,10 +29,10 @@
 
 
 namespace oat\authLdap\model;
-
 use oat\oatbox\Configurable;
 use oat\taoTestTaker\models\CrudService;
 use oat\generis\model\user\UserRdf;
+use oat\generis\model\GenerisRdf;
 use oat\tao\model\TaoOntology;
 use oat\oatbox\service\ServiceManager;
 use oat\generis\Helper\UserHashForEncryption;
@@ -63,13 +63,14 @@ class LdapUserFactory extends Configurable {
 
         // check if login already exists - Create if not, and add the delivery role!
 
-        if (! \core_kernel_users_Service::loginExists($userdata[PROPERTY_USER_LOGIN])) {
+	$userservice = \core_kernel_users_Service::singleton();
+        if (! $userservice->loginExists($userdata[PROPERTY_USER_LOGIN])) {
            $crudservice = CrudService::singleton();
            $taouser = $crudservice->CreateFromArray( $userdata );
         } 
 		
 	    // Retrieve the specified user.
-	    $userResource = \core_kernel_users_Service::getOneUser( $userdata[PROPERTY_USER_LOGIN] );		
+	    $userResource = $userservice->getOneUser( $userdata[PROPERTY_USER_LOGIN] );		
 		// \common_Logger::i("LdapUserFactory authenticate taouser".print_r($userResource, true));
 		
 		$userFactory = ServiceManager::getServiceManager()->get('generis/userFactory') ;
@@ -137,7 +138,7 @@ class LdapUserFactory extends Configurable {
             ,PROPERTY_USER_FIRSTNAME    => self::attributeValue('givenname')
             ,PROPERTY_USER_LASTNAME     => self::attributeValue('sn')
             ,PROPERTY_USER_LOGIN        => self::attributeValue('samaccountname')
-            ,PROPERTY_USER_PASSWORD     => self::rawValue('RANDOM_ABZGD'.rand())
+            ,PROPERTY_USER_PASSWORD     => self::rawValue('RANDOM_ABZGDqwert'.rand())
             ,RDFS_LABEL                 => self::attributeValue('mail')
         );
     }
